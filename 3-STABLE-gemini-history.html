@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini History Viewer V47.0 (Drive Restored)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        /* === RESET & CORE === */
+        :root { --sidebar-width: 280px; }
+        body { font-family: 'Inter', sans-serif; background-color: #131314; color: #e3e3e3; margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
+        
+        /* === SCROLLBAR === */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #131314; }
+        ::-webkit-scrollbar-thumb { background: #444746; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5e5e5e; }
+        .search-scroll::-webkit-scrollbar-track { background: #1e1f20; }
+        .search-scroll::-webkit-scrollbar-thumb { background: #333537; }
+
+        /* === ANIMATIONS === */
+        @keyframes revealLetter { from { opacity: 0; transform: translateY(10px) rotate(5deg); filter: blur(4px); } to { opacity: 1; transform: translateY(0) rotate(0deg); filter: blur(0); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .letter-span { display: inline-block; opacity: 0; }
+        .fade-in-up { animation: fadeIn 0.6s ease-out forwards; }
+        
+        .copy-bubble-btn { opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+        .message-wrapper:hover .copy-bubble-btn { opacity: 1; pointer-events: auto; }
+
+        /* === LAYOUT === */
+        #app-sidebar { 
+            position: fixed; top: 0; left: 0; bottom: 0; 
+            width: var(--sidebar-width); 
+            background-color: #1e1f20; border-right: 1px solid #444746; 
+            z-index: 60; display: flex; flex-direction: column; 
+            min-width: 260px;
+        }
+        
+        #resizer-handle {
+            position: absolute; top: 0; right: 0; bottom: 0; width: 4px;
+            cursor: col-resize; background-color: transparent; z-index: 70;
+            transition: background-color 0.2s;
+        }
+        #resizer-handle:hover, #resizer-handle.resizing { background-color: #a8c7fa; }
+
+        #app-main { 
+            margin-left: var(--sidebar-width); 
+            height: 100vh; 
+            width: calc(100vw - var(--sidebar-width)); 
+            position: relative; background-color: #131314; display: flex; flex-direction: column; 
+        }
+
+        /* === TERMINAL STYLE === */
+        .term-container { margin: 12px 0; background-color: #000000; border: 1px solid rgba(68, 68, 68, 0.4); border-radius: 6px; overflow: hidden; width: 100%; }
+        .term-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background-color: #2f2f2f; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 12px; color: #9ca3af; user-select: none; }
+        .term-body { padding: 12px 16px; background-color: #000000; overflow-x: auto; }
+        .term-code { font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.5; color: #e3e3e3; white-space: pre; margin: 0; display: block; }
+        .term-btn { background: none; border: none; color: #9ca3af; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 6px; border-radius: 4px; transition: all 0.2s; }
+        .term-btn:hover { background-color: rgba(255,255,255,0.1); color: white; }
+        .term-btn svg { pointer-events: none; } 
+
+        /* Syntax & UI */
+        .tok-kw { color: #d57ba0; } .tok-fn { color: #dcdcaa; } .tok-str { color: #ce9178; } .tok-com { color: #6a9955; }  
+        code:not(.term-code) { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(255,255,255,0.1); padding: 0.2em 0.4em; border-radius: 4px; color: #e3e3e3; }
+        .nav-btn { cursor: pointer; padding: 8px; border-radius: 9999px; color: #9ca3af; transition: all 0.2s; background: transparent; border: none; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .nav-btn:hover { background-color: #333537; color: white; }
+        .title-container { display: flex; align-items: center; height: 100%; overflow: hidden; flex: 1; gap: 12px; }
+        .title-text { font-weight: 500; font-size: 1rem; color: #e3e3e3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; padding: 0; line-height: normal; }
+        .stat-badge { font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; letter-spacing: 0.5px; flex-shrink: 0; }
+        .badge-user { background-color: rgba(96, 165, 250, 0.15); color: #93c5fd; border: 1px solid rgba(96, 165, 250, 0.3); }
+        .badge-model { background-color: rgba(248, 113, 113, 0.15); color: #fca5a5; border: 1px solid rgba(248, 113, 113, 0.3); }
+        .model-label { font-size: 11px; color: #9ca3af; margin-bottom: 4px; font-weight: 500; display: block; opacity: 0.8; }
+        
+        /* Icon Rigidity */
+        .fixed-icon-box { display: flex; align-items: center; justify-content: center; width: 20px; min-width: 20px; max-width: 20px; height: 20px; flex-shrink: 0; margin-right: 10px; }
+        .fixed-icon-box svg { width: 16px; height: 16px; display: block; }
+
+        /* Links */
+        a.chat-link, .search-item { text-decoration: none; color: inherit; display: flex !important; align-items: center; width: 100%; box-sizing: border-box; }
+        a.chat-link:hover, .search-item:hover { text-decoration: none; }
+
+        /* Misc */
+        .sidebar-toggle { cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%; user-select: none; }
+        .sidebar-toggle:hover .toggle-icon { color: white; }
+        .toggle-icon { transition: transform 0.3s ease; }
+        .toggle-active .toggle-icon { transform: rotate(180deg); }
+        .chat-image { max-width: 100%; border-radius: 8px; margin: 10px 0; border: 1px solid #444746; }
+        
+        /* Drive Loader */
+        .drive-wrapper { display: inline-flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; max-width: 100%; }
+        .drive-box { font-size: 12px; color: #93c5fd; font-family: monospace; padding: 8px 12px; background-color: rgba(30, 58, 138, 0.3); border: 1px solid rgba(30, 58, 138, 0.5); border-radius: 6px; display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; overflow: hidden; }
+        .drive-box.doc-type { color: #e2e8f0; background-color: rgba(71, 85, 105, 0.3); border-color: rgba(71, 85, 105, 0.5); }
+        .drive-btn { margin-top: 4px; font-size: 10px; color: #9ca3af; cursor: pointer; background: none; border: 1px solid #444; padding: 2px 8px; border-radius: 4px; transition: all 0.2s; display: flex; align-items: center; gap: 4px; }
+        .drive-btn:hover { background-color: #333; color: white; border-color: #666; }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- SIDEBAR -->
+    <aside id="app-sidebar">
+        <div id="resizer-handle"></div>
+
+        <div class="p-4 border-b border-[#444746] flex-shrink-0">
+            <h2 class="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3">Settings</h2>
+            <div class="flex w-full h-10">
+                <button id="btnLoadFolder" class="flex-1 h-full bg-[#333537] hover:bg-[#a8c7fa] hover:text-black text-gray-300 text-xs font-medium px-3 rounded-l-lg flex items-center justify-center gap-2 transition-all duration-300 shadow-sm border border-[#444746] border-r-0 hover:border-[#a8c7fa]">
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                    Load History Folder
+                </button>
+                <button id="btnSidebarCopyPath" class="w-10 h-full bg-[#2f3031] hover:bg-[#a8c7fa] hover:text-black text-gray-400 flex items-center justify-center border border-[#444746] rounded-r-lg transition-all duration-300 hover:border-[#a8c7fa]" title="Copy Folder Path">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 01-2-2V5a2 2 0 012-2h4.586"/></svg>
+                </button>
+            </div>
+            <div id="statusMsg" class="text-[10px] text-green-400 mt-2 text-center h-4"></div>
+        </div>
+        
+        <div class="p-3 pb-0 flex justify-between items-center flex-shrink-0">
+            <div id="sidebarToggle" class="sidebar-toggle">
+                <h2 id="sidebarTitle" class="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Recent Chats</h2>
+                <svg class="w-4 h-4 text-gray-500 toggle-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </div>
+            <span id="chatCount" class="text-[10px] bg-[#333537] px-2 py-0.5 rounded-full text-gray-400">0</span>
+        </div>
+        <div id="sidebarList" class="flex-1 overflow-y-auto px-2 pb-4 pt-2 space-y-0.5 scroll-smooth"></div>
+    </aside>
+
+    <!-- MAIN -->
+    <main id="app-main">
+        <div id="viewHome" class="flex-1 flex flex-col items-center justify-center p-6 w-full h-full absolute inset-0 z-10 bg-[#131314]">
+            <h1 id="animatedTitle" class="text-4xl md:text-5xl font-medium text-[#e3e3e3] mb-10 text-center min-h-[60px] opacity-0">Ready Gemini AI Search History!</h1>
+            <div class="w-full relative max-w-2xl opacity-0" id="searchContainer">
+                <div class="relative group">
+                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                        <svg class="h-5 w-5 text-gray-500 group-focus-within:text-[#a8c7fa] transition-colors" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" /></svg>
+                    </div>
+                    <input type="text" id="searchInput" class="w-full bg-[#1e1f20] text-[#e3e3e3] text-lg py-3.5 pl-12 pr-6 rounded-full border border-[#444746] focus:border-[#a8c7fa] focus:ring-1 focus:ring-[#a8c7fa] outline-none placeholder-gray-500 transition-all duration-300 shadow-lg" placeholder="Search... [@Date 01/11/2025 - 24/11/2025] or [@Model Gemini]" autocomplete="off">
+                </div>
+                <div id="searchResults" class="search-scroll absolute top-full left-0 right-0 mt-2 bg-[#1e1f20] rounded-2xl overflow-hidden shadow-2xl z-50 hidden max-h-[350px] overflow-y-auto border border-[#444746] shadow-xl"></div>
+            </div>
+        </div>
+
+        <div id="viewChat" class="hidden flex-col h-full w-full absolute inset-0 bg-[#131314] z-20">
+            <div class="h-16 border-b border-[#444746] flex items-center px-6 bg-[#1e1f20] shadow-sm z-[100] gap-4 flex-shrink-0 w-full justify-between relative">
+                <div class="flex items-center gap-3 min-w-0 overflow-hidden flex-1 h-full">
+                    <button onclick="backToHome()" class="nav-btn flex-shrink-0" title="Back">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+                    </button>
+                    <div class="title-container">
+                        <span id="chatTitle" class="title-text select-text"></span>
+                        <div id="chatStats" class="flex items-center gap-2 flex-shrink-0"></div>
+                    </div>
+                </div>
+                <div class="flex-shrink-0">
+                    <button id="btnCopyPath" class="flex items-center gap-2 text-xs font-mono text-gray-500 hover:text-[#a8c7fa] bg-[#2f3031] hover:bg-[#333537] py-1.5 px-3 rounded border border-[#444746] transition-all cursor-pointer">
+                        <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 01-2-2V5a2 2 0 012-2h4.586"/></svg>
+                        <span>Copy Path</span>
+                    </button>
+                </div>
+            </div>
+            <div id="chatContainer" class="flex-1 overflow-y-auto p-4 md:p-10 space-y-8 scroll-smooth pb-20 w-full bg-[#131314] relative z-10"></div>
+        </div>
+    </main>
+
+    <script>
+        // === ICONS DEFINED (RESTORED) ===
+        const ICON_CHAT = `<svg class="text-gray-500 group-hover:text-[#a8c7fa] mr-3 icon-rigid" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 01-2 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>`;
+        const ICON_CHAT_SMALL = `<svg class="text-gray-500 icon-rigid" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>`;
+        // FIXED SIZE CHECKMARK
+        const ICON_CHECK = `<svg class="text-green-400" style="min-width: 16px; width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+        const ICON_HISTORY = `<svg class="text-yellow-500 group-hover:text-[#a8c7fa] mr-3 icon-rigid" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+        const ICON_REFRESH = `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>`;
+        const ICON_LOADING = `<svg class="w-3 h-3 spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m0 14v1m8-8h-1M5 12H4m13.657-5.657l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707"/></svg>`;
+        const ICON_FILE = `<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>`;
+
+        const DUMMY_CHATS = [{ id: 'dummy1', title: 'System: Drive Restore', messages: [{ role: 'user', text: 'Drive Test' }], modelName: 'models/gemini-pro', date: Date.now() }];
+        let allChats = [...DUMMY_CHATS];
+        let sessionHistory = []; 
+        let isHistoryMode = false;
+
+        const DB_NAME = 'GeminiHistoryDB_V47';
+        const STORE_NAME = 'chats';
+        const BASE_FOLDER_PATH = "C:\\Users\\User\\Downloads\\Search History Gemini\\History\\Google AI Studio";
+
+        function cleanTitle(title) { if (!title) return "Untitled"; return title.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').replace(/\s+/g, ' ').trim(); }
+        function formatModelName(rawName) { if (!rawName) return "Gemini Model"; let name = rawName.replace(/^models\//, '').replace(/-/g, ' '); return name.replace(/\b\w/g, l => l.toUpperCase()); }
+        function formatDate(timestamp) { if (!timestamp) return ""; return new Date(timestamp).toLocaleString('en-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }); }
+        function formatSessionTime(timestamp) { if (!timestamp) return ""; return new Date(timestamp).toLocaleString('en-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }); }
+
+        // --- RESIZE LOGIC ---
+        const resizer = document.getElementById('resizer-handle');
+        let isResizing = false;
+        let maxSidebarWidth = 500;
+
+        function calculateMaxSidebarWidth() {
+            if (!allChats || allChats.length === 0) return;
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            context.font = "12px Inter, sans-serif";
+            let maxPixelWidth = 0;
+            allChats.forEach(c => {
+                const width = context.measureText(cleanTitle(c.title)).width;
+                if (width > maxPixelWidth) maxPixelWidth = width;
+            });
+            let calculated = maxPixelWidth + 100;
+            if (calculated < 280) calculated = 280; 
+            if (calculated > 1000) calculated = 1000; 
+            maxSidebarWidth = calculated;
+        }
+
+        resizer.addEventListener('mousedown', (e) => { isResizing = true; document.body.style.cursor = 'col-resize'; e.preventDefault(); });
+        document.addEventListener('mousemove', (e) => { 
+            if (!isResizing) return; 
+            let newWidth = e.clientX; 
+            if (newWidth < 260) newWidth = 260; 
+            if (newWidth > maxSidebarWidth) newWidth = maxSidebarWidth; 
+            document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`); 
+        });
+        document.addEventListener('mouseup', () => { if(isResizing) { isResizing = false; document.body.style.cursor = 'default'; } });
+
+        window.backToHome = function() {
+            history.pushState(null, null, window.location.pathname);
+            showHomeView();
+        };
+
+        function showHomeView() {
+            document.getElementById('viewChat').classList.add('hidden');
+            document.getElementById('viewChat').style.display = 'none';
+            document.getElementById('viewHome').classList.remove('hidden');
+            playTitleAnimation();
+        }
+
+        // --- DRIVE LOADER (RESTORED) ---
+        window.loadDriveImage = function(btn, driveId) {
+            const container = btn.closest('.drive-wrapper');
+            const btnText = btn.querySelector('span');
+            const iconContainer = btn.querySelector('div');
+            btnText.textContent = "Loading...";
+            iconContainer.innerHTML = ICON_LOADING;
+            btn.disabled = true;
+            btn.style.opacity = "0.7";
+            const img = new Image();
+            img.onload = () => { container.innerHTML = `<img src="https://drive.google.com/thumbnail?id=${driveId}&sz=w1000" class="chat-image fade-in-up" alt="Drive Content" />`; };
+            img.onerror = () => {
+                btnText.textContent = "Refresh (Load Failed)";
+                iconContainer.innerHTML = ICON_REFRESH;
+                btn.disabled = false;
+                btn.style.opacity = "1";
+                btn.style.borderColor = "#ef4444";
+                btn.style.color = "#ef4444";
+            };
+            img.src = `https://drive.google.com/thumbnail?id=${driveId}&sz=w1000`;
+        };
+
+        document.getElementById('sidebarToggle').addEventListener('click', () => {
+            isHistoryMode = !isHistoryMode;
+            const toggle = document.getElementById('sidebarToggle');
+            const title = document.getElementById('sidebarTitle');
+            if (isHistoryMode) {
+                toggle.classList.add('toggle-active');
+                title.textContent = "SESSION HISTORY";
+                title.classList.replace('text-gray-500', 'text-yellow-500');
+            } else {
+                toggle.classList.remove('toggle-active');
+                title.textContent = "RECENT CHATS";
+                title.classList.replace('text-yellow-500', 'text-gray-500');
+            }
+            renderSidebar();
+        });
+
+        function showChatView(chat) {
+            document.getElementById('viewHome').classList.add('hidden');
+            const viewChat = document.getElementById('viewChat');
+            viewChat.classList.remove('hidden');
+            viewChat.style.display = 'flex';
+            document.getElementById('chatTitle').textContent = cleanTitle(chat.title);
+            const dateStr = formatDate(chat.date);
+            document.getElementById('chatTitle').title = `${chat.title}\nModified: ${dateStr}`;
+            let userCount = 0, modelCount = 0;
+            chat.messages.forEach(m => { if (m.role === 'user') userCount++; else modelCount++; });
+            document.getElementById('chatStats').innerHTML = `<span class="stat-badge badge-user">User: ${userCount}</span><span class="stat-badge badge-model">Model: ${modelCount}</span>`;
+            const btnCopyPath = document.getElementById('btnCopyPath');
+            btnCopyPath.onclick = () => {
+                const fullPath = BASE_FOLDER_PATH + "\\" + chat.title;
+                copyToClipboard(fullPath, btnCopyPath);
+            };
+            const cont = document.getElementById('chatContainer');
+            cont.innerHTML = '';
+            const displayModelName = formatModelName(chat.modelName);
+            chat.messages.forEach(msg => {
+                try {
+                    const isUser = msg.role === 'user';
+                    const wrapper = document.createElement('div');
+                    wrapper.className = `flex w-full message-wrapper group ${isUser ? 'justify-end' : 'justify-start'}`;
+                    const bubble = document.createElement('div');
+                    bubble.className = `relative max-w-[85%] md:max-w-[75%] rounded-2xl px-5 py-3.5 text-sm md:text-[15px] leading-7 ${isUser ? 'bg-[#2f2f2f] text-[#e3e3e3] rounded-tr-sm' : 'text-[#e3e3e3] w-full px-0'}`; 
+                    
+                    let contentHtml = "";
+                    // --- RENDER DRIVE/IMAGES ---
+                    if (msg.images && msg.images.length > 0) {
+                        msg.images.forEach(img => {
+                            if (img.type === 'drive') {
+                                contentHtml += `<div class="drive-wrapper"><div class="drive-box"><svg class="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>[Image ID Drive: ${img.data}]</div><button class="drive-btn" onclick="loadDriveImage(this, '${img.data}')"><div>${ICON_REFRESH}</div><span>Refresh</span></button></div><br>`;
+                            } else if (img.type === 'drive_file') {
+                                contentHtml += `<div class="drive-wrapper"><div class="drive-box doc-type">${ICON_FILE}[File ID Drive: ${img.data}]</div><button class="drive-btn" onclick="loadDriveImage(this, '${img.data}')"><div>${ICON_REFRESH}</div><span>Load Preview</span></button></div><br>`;
+                            } else if (img.type === 'inline') {
+                                contentHtml += `<img src="data:${img.mimeType};base64,${img.data}" class="chat-image" alt="Model Image" /><br>`;
+                            }
+                        });
+                    }
+                    if (msg.text) contentHtml += formatMessage(msg.text);
+
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = `copy-bubble-btn absolute ${isUser ? '-left-8 top-2' : '-right-8 top-0'} text-gray-500 hover:text-white p-1 rounded transition cursor-pointer`;
+                    copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`;
+                    copyBtn.onclick = (e) => { e.stopPropagation(); copyToClipboard(msg.text || "[Content]", copyBtn, false); };
+
+                    if (isUser) {
+                        bubble.innerHTML = contentHtml;
+                        bubble.appendChild(copyBtn);
+                    } else {
+                        bubble.innerHTML = `<div class="flex gap-4"><div class="flex-shrink-0 mt-1 w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 to-red-400 flex items-center justify-center"><svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></div><div class="flex-1 min-w-0"><span class="model-label">${displayModelName}</span>${contentHtml}</div></div>`;
+                        bubble.querySelector('.flex-1').appendChild(copyBtn);
+                        copyBtn.className = "copy-bubble-btn absolute right-0 -top-2 text-gray-500 hover:text-white bg-[#131314] border border-[#444] rounded p-1";
+                    }
+                    wrapper.appendChild(bubble);
+                    cont.appendChild(wrapper);
+                } catch(e){}
+            });
+        }
+
+        function openChat(id, event = null) {
+            if(event) event.preventDefault();
+            const chat = allChats.find(c => c.id === id);
+            if (!chat) return;
+            const idx = sessionHistory.findIndex(item => item.id === id);
+            if (idx > -1) sessionHistory.splice(idx, 1);
+            sessionHistory.unshift({ id: id, timestamp: Date.now() });
+            if (isHistoryMode) renderSidebar();
+            const safeTitle = encodeURIComponent(chat.title);
+            history.pushState({id: id}, '', '#' + safeTitle);
+            showChatView(chat);
+        }
+
+        window.addEventListener('popstate', (event) => { handleHashNavigation(); });
+
+        function handleHashNavigation() {
+            const hash = decodeURIComponent(window.location.hash.substring(1));
+            if (hash && allChats.length > 0) {
+                const chat = allChats.find(c => c.title === hash);
+                if (chat) { showChatView(chat); return; }
+            }
+            showHomeView();
+        }
+
+        function playTitleAnimation() {
+            const container = document.getElementById('animatedTitle');
+            const text = "Ready Gemini AI Search History!";
+            container.innerHTML = "";
+            container.classList.remove('opacity-0');
+            text.split('').forEach((char, index) => {
+                const span = document.createElement('span');
+                span.textContent = char === ' ' ? '\u00A0' : char;
+                span.className = 'letter-span';
+                span.style.animation = `revealLetter 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards ${index * 0.035}s`;
+                container.appendChild(span);
+            });
+            const searchBox = document.getElementById('searchContainer');
+            searchBox.classList.remove('opacity-0');
+            searchBox.classList.remove('fade-in-up');
+            void searchBox.offsetWidth;
+            searchBox.classList.add('fade-in-up');
+        }
+
+        function dedent(str) {
+            const lines = str.split('\n');
+            let minIndent = Infinity;
+            for (let line of lines) { if (line.trim().length === 0) continue; const indent = line.match(/^\s*/)[0].length; if (indent < minIndent) minIndent = indent; }
+            if (minIndent === Infinity || minIndent === 0) return str;
+            return lines.map(line => line.length >= minIndent ? line.substring(minIndent) : line).join('\n').trim();
+        }
+
+        function highlightSyntax(code) {
+            code = code.replace(/(".*?"|'.*?')/g, '<span class="tok-str">$1</span>');
+            code = code.replace(/\b(import|from|def|return|if|else|for|while|class|const|let|var|function)\b/g, '<span class="tok-kw">$1</span>');
+            code = code.replace(/\b(\w+)(?=\()/g, '<span class="tok-fn">$1</span>');
+            code = code.replace(/(#.*$)/gm, '<span class="tok-com">$1</span>');
+            return code;
+        }
+
+        function formatMessage(text) {
+            if (!text) return "";
+            const parts = text.split(/(```\w*[\s\S]*?```)/g);
+            return parts.map(part => {
+                if (part.startsWith('```')) {
+                    const match = part.match(/```(\w*)\s*?([\s\S]*?)```/);
+                    if (match) {
+                        const language = match[1] || 'code';
+                        let rawCode = dedent(match[2]);
+                        const highlightedContent = highlightSyntax(rawCode);
+                        const copyIconSvg = '<svg style="width:14px;height:14px;" stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+                        let html = '<div class="term-container">';
+                        html += '<div class="term-header">';
+                        html += '<span style="text-transform:lowercase;"><span style="text-transform:uppercase;">' + language.charAt(0) + '</span>' + language.slice(1) + '</span>';
+                        html += '<button onclick="copyToClipboard(this.parentElement.nextElementSibling.innerText, this, true)" class="term-btn">' + copyIconSvg + '<span>Copy</span></button>';
+                        html += '</div>';
+                        html += '<div class="term-body">';
+                        html += '<pre style="margin:0;"><code class="term-code">' + highlightedContent + '</code></pre>';
+                        html += '</div></div>';
+                        return html;
+                    }
+                    return part;
+                } else {
+                    let safe = part.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
+                    safe = safe.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
+                    safe = safe.replace(/\n/g, '<br>');
+                    return safe;
+                }
+            }).join('');
+        }
+
+        async function copyToClipboard(text, btnElement, isTerminal = false) {
+            try {
+                await navigator.clipboard.writeText(text);
+                if (isTerminal) {
+                    const span = btnElement.querySelector('span');
+                    if(span) {
+                        const originalText = span.innerText;
+                        span.innerText = "Copied!";
+                        span.style.color = "#4ade80";
+                        setTimeout(() => { span.innerText = originalText; span.style.color = "inherit"; }, 2000);
+                    }
+                    return;
+                }
+                const originalHTML = btnElement.innerHTML;
+                btnElement.innerHTML = ICON_CHECK;
+                setTimeout(() => btnElement.innerHTML = originalHTML, 2000);
+            } catch (err) { console.error(err); }
+        }
+
+        document.getElementById('btnSidebarCopyPath').addEventListener('click', () => {
+            copyToClipboard(BASE_FOLDER_PATH, document.getElementById('btnSidebarCopyPath'));
+        });
+
+        function parseGeminiFile(fileName, jsonContent, lastModified) {
+            try {
+                const data = JSON.parse(jsonContent.trim());
+                const chunks = data.chunkedPrompt?.chunks || data.prompt?.chunks || [];
+                const rawModelName = data.runSettings?.model || "";
+                let messages = [];
+                let currentMsg = null;
+                chunks.forEach(chunk => {
+                    const role = (chunk.role || 'model').toLowerCase();
+                    if (role === 'system' || chunk.isThought) return;
+                    if (!currentMsg || currentMsg.role !== role) {
+                        if (currentMsg) messages.push(currentMsg);
+                        currentMsg = { role: role, text: "", images: [] };
+                    }
+                    if (chunk.driveImage) currentMsg.images.push({ type: 'drive', data: chunk.driveImage.id });
+                    if (chunk.driveDocument) currentMsg.images.push({ type: 'drive_file', data: chunk.driveDocument.id });
+                    if (chunk.inlineImage) currentMsg.images.push({ type: 'inline', mimeType: chunk.inlineImage.mimeType, data: chunk.inlineImage.data });
+                    let textPart = "";
+                    if (chunk.parts) chunk.parts.forEach(p => { if (!p.thought && p.text) textPart += p.text; });
+                    if (!textPart && chunk.text) textPart = chunk.text;
+                    if (textPart) currentMsg.text += textPart;
+                });
+                if (currentMsg) messages.push(currentMsg);
+                if (messages.length === 0) return null;
+                return { id: 'c_' + Math.random().toString(36).substr(2), title: cleanTitle(fileName), messages: messages, modelName: rawModelName, date: lastModified || Date.now() };
+            } catch (e) { return null; }
+        }
+
+        const dbPromise = new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = (e) => { e.target.result.createObjectStore(STORE_NAME, { keyPath: 'id' }); };
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = (e) => reject(e);
+        });
+
+        async function saveChats(chats) {
+            const db = await dbPromise;
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).clear();
+            chats.forEach(c => tx.objectStore(STORE_NAME).put(c));
+        }
+
+        async function loadChats() {
+            const db = await dbPromise;
+            return new Promise(r => db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll().onsuccess = (e) => r(e.target.result));
+        }
+
+        document.getElementById('btnLoadFolder').addEventListener('click', async () => {
+            const status = document.getElementById('statusMsg');
+            status.textContent = "Loading...";
+            try {
+                const dir = await window.showDirectoryPicker();
+                const list = [];
+                for await (const entry of dir.values()) {
+                    if (entry.kind === 'file') {
+                        const f = await entry.getFile();
+                        const parsed = parseGeminiFile(entry.name, await f.text(), f.lastModified);
+                        if (parsed) list.push(parsed);
+                    }
+                }
+                list.sort((a, b) => b.date - a.date);
+                allChats = list;
+                await saveChats(allChats);
+                renderSidebar();
+                calculateMaxSidebarWidth();
+                status.textContent = `Loaded ${list.length}`;
+                handleHashNavigation();
+            } catch (e) { status.textContent = "Error"; }
+        });
+
+        (async () => {
+            const stored = await loadChats();
+            if (stored.length) {
+                allChats = stored;
+                allChats.sort((a, b) => b.date - a.date);
+                calculateMaxSidebarWidth();
+            }
+            renderSidebar();
+            playTitleAnimation();
+            handleHashNavigation();
+        })();
+
+        function renderSidebar() {
+            const list = document.getElementById('sidebarList');
+            const count = document.getElementById('chatCount');
+            list.innerHTML = '';
+            let dataToShow = [];
+            if (isHistoryMode) {
+                dataToShow = sessionHistory.map(item => {
+                    const chat = allChats.find(c => c.id === item.id);
+                    return chat ? { ...chat, sessionTime: item.timestamp } : null;
+                }).filter(Boolean);
+                if (dataToShow.length === 0) {
+                    list.innerHTML = '<div class="text-xs text-gray-500 px-3 py-2 italic">None</div>';
+                    count.innerText = "0"; return;
+                }
+            } else { dataToShow = allChats; }
+            count.innerText = dataToShow.length;
+
+            dataToShow.forEach(c => {
+                const safeTitle = encodeURIComponent(c.title);
+                const icon = isHistoryMode ? ICON_HISTORY : ICON_CHAT;
+                let tooltipText = "";
+                if (isHistoryMode) tooltipText = `${c.title}\nLast Opened: ${formatSessionTime(c.sessionTime)}`;
+                else tooltipText = `${c.title}\nModified: ${formatDate(c.date)}`;
+
+                const a = document.createElement('a');
+                a.href = '#' + safeTitle;
+                a.className = "chat-link group px-3 py-2 rounded-md hover:bg-[#333537] transition-colors";
+                a.title = tooltipText;
+                a.onclick = (e) => openChat(c.id, e);
+                
+                a.innerHTML = `
+                    <div class="fixed-icon-box text-gray-500 group-hover:text-[#a8c7fa]">${icon}</div>
+                    <span class="text-xs text-gray-400 group-hover:text-[#e3e3e3] truncate flex-1 min-w-0">${c.title}</span>
+                `;
+                list.appendChild(a);
+            });
+        }
+
+        function parseSearchDate(dateStr) {
+            const regex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/;
+            const match = dateStr.match(regex);
+            if (match) {
+                const day = parseInt(match[1]);
+                const month = parseInt(match[2]) - 1; 
+                const year = parseInt(match[3]);
+                return new Date(year, month, day);
+            }
+            const d = new Date(dateStr);
+            if (!isNaN(d.getTime())) return d;
+            return null;
+        }
+
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            const q = e.target.value.toLowerCase();
+            const box = document.getElementById('searchResults');
+            if (!q) { box.classList.add('hidden'); return; }
+            let hits = [];
+            if (q.startsWith('[@date')) {
+                const term = q.replace('[@date', '').replace(']', '').trim();
+                const rangeParts = term.split('-').map(s => s.trim());
+                if (rangeParts.length === 2 && rangeParts[0] && rangeParts[1]) {
+                    const start = parseSearchDate(rangeParts[0]);
+                    const end = parseSearchDate(rangeParts[1]);
+                    if (start && end) {
+                        end.setHours(23, 59, 59, 999);
+                        hits = allChats.filter(c => {
+                            const cDate = new Date(c.date);
+                            return cDate >= start && cDate <= end;
+                        }).map(c => ({t: 'd', c, txt: formatDate(c.date)}));
+                    }
+                } else if (term.length > 0) {
+                    const singleDate = parseSearchDate(term);
+                    if (singleDate) {
+                        const startDay = new Date(singleDate); startDay.setHours(0,0,0,0);
+                        const endDay = new Date(singleDate); endDay.setHours(23,59,59,999);
+                        hits = allChats.filter(c => {
+                            const cDate = new Date(c.date);
+                            return cDate >= startDay && cDate <= endDay;
+                        }).map(c => ({t: 'd', c, txt: formatDate(c.date)}));
+                    } else {
+                        hits = allChats.filter(c => formatDate(c.date).toLowerCase().includes(term)).map(c => ({t: 'd', c, txt: formatDate(c.date)}));
+                    }
+                }
+            } else if (q.startsWith('[@model')) {
+                const term = q.replace('[@model', '').replace(']', '').trim();
+                if (term.length > 0) {
+                    hits = allChats.filter(c => formatModelName(c.modelName).toLowerCase().includes(term)).map(c => ({t: 'm', c, txt: formatModelName(c.modelName)}));
+                }
+            } else {
+                for(let c of allChats) {
+                    if (cleanTitle(c.title).toLowerCase().includes(q)) hits.push({t:'t', c});
+                    else { const m = c.messages.find(msg => msg.text.toLowerCase().includes(q)); if(m) hits.push({t:'c', c, txt: m.text}); }
+                }
+            }
+            
+            if(!hits.length) { box.classList.add('hidden'); return; }
+            box.classList.remove('hidden');
+            box.innerHTML = '';
+            let regex = null;
+            if (!q.startsWith('[@')) { try { regex = new RegExp(`(${q})`, 'gi'); } catch(e){} }
+
+            hits.forEach(h => {
+                const safeTitle = encodeURIComponent(h.c.title);
+                const a = document.createElement('a');
+                a.href = '#' + safeTitle;
+                a.className = "search-item px-4 py-3 border-b border-[#333] hover:bg-[#333537] cursor-pointer block"; 
+                a.title = `${cleanTitle(h.c.title)}\nModified: ${formatDate(h.c.date)}`;
+                let titleHtml = cleanTitle(h.c.title);
+                if(regex) titleHtml = titleHtml.replace(regex, '<span class="bg-blue-500/30 text-white rounded px-1">$1</span>');
+                let snippetHtml = "";
+                if(h.t === 'c' && regex) {
+                    const idx = h.txt.toLowerCase().indexOf(q);
+                    const start = Math.max(0, idx - 20);
+                    let txt = h.txt.substring(start, start + 60) + "...";
+                    snippetHtml = `<div class="text-xs text-gray-400 font-mono mt-1 pl-2 border-l-2 border-gray-600">...${txt.replace(regex, '<span class="bg-yellow-500/20 text-yellow-100 rounded px-1 font-bold">$1</span>')}</div>`;
+                } else if (h.t === 'm') snippetHtml = `<div class="text-xs text-blue-300 font-mono mt-1 pl-2">Model: ${h.txt}</div>`;
+                else if (h.t === 'd') snippetHtml = `<div class="text-xs text-green-300 font-mono mt-1 pl-2">Date: ${h.txt}</div>`;
+
+                a.innerHTML = `
+                    <div class="fixed-icon-box text-gray-500">
+                        ${ICON_CHAT_SMALL}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm text-gray-200 font-medium truncate">${titleHtml}</div>
+                        ${snippetHtml}
+                    </div>
+                `;
+                a.onclick = (e) => openChat(h.c.id, e);
+                box.appendChild(a);
+            });
+        });
+
+        window.addEventListener('click', (e) => {
+           if(!document.getElementById('searchContainer').contains(e.target)) document.getElementById('searchResults').classList.add('hidden');
+        });
+    </script>
+</body>
+</html>
